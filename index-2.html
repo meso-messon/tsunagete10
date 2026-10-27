@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>つなげて10！</title>
+<style>
+:root{color-scheme:light;--ink:#263247;--blue:#3978d4;--pale:#eaf3ff;--bg:#f4f7fc}
+*{box-sizing:border-box}
+body{margin:0;background:linear-gradient(160deg,#f4f7fc,#eaf2ff);font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;color:var(--ink);min-height:100vh;display:flex;justify-content:center;align-items:flex-start;padding:8px}
+.app{width:min(100%,680px);background:#fff;border-radius:20px;padding:clamp(14px,3vw,24px);box-shadow:0 12px 40px #20375b18}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px}
+h1{font-size:clamp(22px,6vw,30px);margin:0;letter-spacing:.02em}
+.sub{margin:6px 0 16px;color:#66738a;font-size:14px}
+.score{background:#eef4ff;border-radius:16px;padding:8px 14px;text-align:center;min-width:82px}
+.score small{display:block;color:#65748b;font-size:11px}.score strong{font-size:25px;color:#2f67bd}
+.goal{background:#f6f8fc;border-radius:16px;padding:13px;text-align:center;margin-bottom:14px}
+.goal small{color:#65748b}.sum{font-size:32px;font-weight:800;margin:2px 0}
+#status{font-size:13px;color:#52617a;min-height:20px}
+.board{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:clamp(5px,1.2vw,10px);touch-action:none;user-select:none;-webkit-user-select:none;width:100%}
+.tile{aspect-ratio:1;border-radius:14px;background:#edf2fa;border:2px solid transparent;display:flex;align-items:center;justify-content:center;font-size:clamp(25px,6vw,40px);font-weight:800;color:#293b57;transition:background .08s,border-color .08s;position:relative}
+.tile.selected{background:#cfe5ff;border-color:#4387e4;color:#174d96;transform:scale(.97)}
+.tile.selected:after{content:"";position:absolute;inset:5px;border:1px solid #75a9ef;border-radius:9px;pointer-events:none}
+.tile.used{animation:pop .22s ease;background:#d8f6e5;color:#218052}
+@keyframes pop{50%{transform:scale(.9)}}
+.controls{display:flex;gap:9px;margin-top:16px}
+button{flex:1;border:0;border-radius:13px;padding:14px 10px;font-size:15px;font-weight:700;background:#edf2fa;color:#34445d;cursor:pointer}
+button.primary{background:#3978d4;color:white}
+.timerbar{height:7px;background:#e8edf5;border-radius:99px;overflow:hidden;margin:-5px 0 14px}.timerfill{height:100%;width:100%;background:#3978d4;transition:width .2s linear}.note{font-size:12px;color:#78849a;line-height:1.6;margin:13px 2px 0}button:disabled{opacity:.5;cursor:not-allowed}
+@media(max-width:420px){body{padding:4px}.app{border-radius:16px;padding:12px}.board{gap:5px}.tile{border-radius:10px}header{gap:6px}.score{min-width:65px;padding:7px 8px}.score strong{font-size:22px}h1{font-size:clamp(19px,5.3vw,25px)}.sub{font-size:13px;margin-bottom:12px}.goal{padding:10px;margin-bottom:12px}.controls{gap:7px}.note{font-size:11px}}
+</style>
+</head>
+<body>
+<main class="app">
+<header><h1>🔟 つなげて10！</h1><div style="display:flex;gap:8px;align-items:center"><div class="score"><small>残り時間</small><strong id="timer">60</strong><small>秒</small></div><div class="score"><small>スコア</small><strong id="score">0</strong></div></div></header>
+<p class="sub">指で数字をなぞって、合計10を作ろう！</p><div class="timerbar"><div class="timerfill" id="timerfill"></div></div>
+<section class="goal"><small>つないだ数字の合計</small><div class="sum" id="sum">0 / 10</div><div id="status" aria-live="polite">数字を押したまま、隣へなぞってね！</div></section>
+<div class="board" id="board" aria-label="数字パズル盤"></div>
+<div class="controls"><button id="undo">↶ やり直す</button><button class="primary" id="new">▶ スタート / もう一度</button></div>
+<p class="note">遊び方：数字を押したまま上下左右の隣の数字へなぞってね。指を離すと判定！ 合計10なら成功して数字が入れ替わるよ。つないだ数字1個につき10点（3個なら30点、4個なら40点）！ 10になるつなぎ方がなくなったら自動でシャッフルするよ。</p>
+</main>
+<script>
+(() => {
+ const W=5, H=5, boardEl=document.getElementById('board');
+ const sumEl=document.getElementById('sum'), statusEl=document.getElementById('status'), scoreEl=document.getElementById('score');
+ let values=[], path=[], score=0, dragging=false, ignoreClick=false, timeLeft=60, timerId=null, started=false, ended=false;
+ const messages={start:'指を動かして隣の数字をつないでね！',over:'10を超えたよ。もう一度なぞってみよう！',miss:'今回は10じゃなかったよ。もう一度！',win:'🎉 ぴったり10！ 成功！'};
+ function randomDigit(){return Math.floor(Math.random()*9)+1}
+ function setStatus(s){statusEl.textContent=s}
+ function total(){return path.reduce((a,i)=>a+values[i],0)}
+ function adjacent(a,b){return Math.abs(Math.floor(a/W)-Math.floor(b/W))+Math.abs(a%W-b%W)===1}
+ function hasTenPath(){
+   const failed = new Set();
+   function walk(i,sum,used){
+     if(sum===10)return true;
+     if(sum>10)return false;
+     const key=i+'|'+sum+'|'+used.join(',');
+     if(failed.has(key))return false;
+     for(let j=0;j<values.length;j++){
+       if(used.includes(j)||!adjacent(i,j))continue;
+       if(walk(j,sum+values[j],[...used,j]))return true;
+     }
+     failed.add(key); return false;
+   }
+   for(let i=0;i<values.length;i++)if(walk(i,values[i],[i]))return true;
+   return false;
+ }
+ function shuffleUntilSolvable(){
+   let tries=0;
+   while(!hasTenPath() && tries<100){
+     values=Array.from({length:W*H},randomDigit);
+     tries++;
+   }
+   if(!hasTenPath()){values[0]=1;values[1]=9;}
+ }
+ function updateTimer(){
+   document.getElementById('timer').textContent=timeLeft;
+   document.getElementById('timerfill').style.width=(timeLeft/60*100)+'%';
+   document.getElementById('timerfill').style.background=timeLeft<=10?'#d65353':'#3978d4';
+ }
+ function endGame(){
+   clearInterval(timerId); timerId=null; ended=true; started=false; dragging=false; path=[]; render();
+   setStatus('⏰ 時間切れ！ スコアは '+score+' 点！「もう一度」で再挑戦しよう。');
+   document.getElementById('undo').disabled=true;
+ }
+ function startGame(){
+   clearInterval(timerId); timeLeft=60; score=0; scoreEl.textContent='0'; path=[]; dragging=false; started=true; ended=false;
+   values=Array.from({length:W*H},randomDigit); shuffleUntilSolvable(); updateTimer(); render();
+   document.getElementById('undo').disabled=false;
+   setStatus('スタート！ 1分以内にできるだけ多く10を作ろう！');
+   timerId=setInterval(()=>{timeLeft--;updateTimer();if(timeLeft<=0)endGame()},1000);
+ }
+ function render(){
+   boardEl.innerHTML='';
+   values.forEach((v,i)=>{
+     const el=document.createElement('div'); el.className='tile'; el.dataset.index=i; el.textContent=v;
+     if(path.includes(i)) el.classList.add('selected');
+     boardEl.appendChild(el);
+   });
+   sumEl.textContent=total()+' / 10';
+   sumEl.style.color=total()===10?'#218052':total()>10?'#c44d4d':'#263247';
+ }
+ function startAt(i){if(!started||ended)return;path=[i];dragging=true;render();setStatus('あと '+(10-total())+' で10！')}
+ function moveTo(i){
+   if(!started||ended||!dragging||path.length===0)return;
+   const last=path[path.length-1];
+   if(i===last)return;
+   // Allow backtracking by moving to the previous tile.
+   if(path.length>1 && i===path[path.length-2]){path.pop();render();setStatus('合計 '+total()+'。続けてなぞってね！');return}
+   if(path.includes(i)||!adjacent(last,i))return;
+   const next=total()+values[i];
+   if(next>10){setStatus('10を超えたよ！ 指を離してやり直そう。');return}
+   path.push(i);render();
+   setStatus(next===10?'✨ 10！ 指を離して決定！':'合計 '+next+'。あと '+(10-next)+' で10！');
+ }
+ function finish(){
+   if(!dragging)return; dragging=false;
+   const s=total();
+   if(!started||ended){path=[];render();return}
+   if(s===10){
+     const earned = path.length * 10;
+     path.forEach(i=>{values[i]=randomDigit()});
+     shuffleUntilSolvable();
+     score+=earned;scoreEl.textContent=score;path=[];render();setStatus('🎉 ぴったり10！ '+(earned)+'点ゲット！');
+   }else if(s>0){path=[];render();setStatus(messages.miss)}
+   else {path=[];render();setStatus(messages.start)}
+ }
+ function indexFromPoint(x,y){
+   const el=document.elementFromPoint(x,y);
+   const tile=el&&el.closest?el.closest('.tile'):null;
+   return tile&&boardEl.contains(tile)?Number(tile.dataset.index):-1;
+ }
+ boardEl.addEventListener('pointerdown',e=>{
+   const i=indexFromPoint(e.clientX,e.clientY); if(i<0)return;
+   e.preventDefault(); dragging=false; startAt(i);
+   try{boardEl.setPointerCapture(e.pointerId)}catch(_){}
+ });
+ boardEl.addEventListener('pointermove',e=>{
+   if(!dragging)return; e.preventDefault();
+   const i=indexFromPoint(e.clientX,e.clientY);if(i>=0)moveTo(i);
+ });
+ boardEl.addEventListener('pointerup',e=>{if(dragging){e.preventDefault();finish()}});
+ boardEl.addEventListener('pointercancel',()=>{if(dragging)finish()});
+ document.getElementById('undo').addEventListener('click',()=>{dragging=false;path=[];render();setStatus('選び直そう！ 数字を押したままなぞってね。')});
+ document.getElementById('new').addEventListener('click',startGame);
+ values=Array.from({length:W*H},randomDigit);shuffleUntilSolvable();render();updateTimer();document.getElementById('undo').disabled=true;setStatus('「スタート」を押すと60秒チャレンジ開始！');
+})();
+</script>
+</body>
+</html>
