@@ -22,6 +22,8 @@ h1{font-size:clamp(22px,6vw,30px);margin:0;letter-spacing:.02em}
 .tile.selected{background:#cfe5ff;border-color:#4387e4;color:#174d96;transform:scale(.97)}
 .tile.selected:after{content:"";position:absolute;inset:5px;border:1px solid #75a9ef;border-radius:9px;pointer-events:none}
 .tile.used{animation:pop .22s ease;background:#d8f6e5;color:#218052}
+.tile.hint{background:#fff0b3;border-color:#e9ad20;color:#795500;box-shadow:0 0 0 3px #ffe8a1;animation:hintPulse .85s ease-in-out infinite alternate}
+@keyframes hintPulse{from{transform:scale(1)}to{transform:scale(.96);box-shadow:0 0 0 5px #ffe8a1}}
 @keyframes pop{50%{transform:scale(.9)}}
 .controls{display:flex;gap:9px;margin-top:16px}
 button{flex:1;border:0;border-radius:13px;padding:14px 10px;font-size:15px;font-weight:700;background:#edf2fa;color:#34445d;cursor:pointer}
@@ -43,7 +45,7 @@ button.primary{background:#3978d4;color:white}
 (() => {
  const W=5, H=5, boardEl=document.getElementById('board');
  const sumEl=document.getElementById('sum'), statusEl=document.getElementById('status'), scoreEl=document.getElementById('score');
- let values=[], path=[], score=0, dragging=false, ignoreClick=false, timeLeft=60, timerId=null, started=false, ended=false;
+ let values=[], path=[], hintPath=[], score=0, dragging=false, ignoreClick=false, timeLeft=60, timerId=null, started=false, ended=false;
  const messages={start:'指を動かして隣の数字をつないでね！',over:'10を超えたよ。もう一度なぞってみよう！',miss:'今回は10じゃなかったよ。もう一度！',win:'🎉 ぴったり10！ 成功！'};
  function randomDigit(){return Math.floor(Math.random()*9)+1}
  function setStatus(s){statusEl.textContent=s}
@@ -65,6 +67,23 @@ button.primary{background:#3978d4;color:white}
    for(let i=0;i<values.length;i++)if(walk(i,values[i],[i]))return true;
    return false;
  }
+ function findTenPath(){
+   function walk(i,sum,used){
+     if(sum===10)return used;
+     if(sum>10)return null;
+     for(let j=0;j<values.length;j++){
+       if(used.includes(j)||!adjacent(i,j))continue;
+       const result=walk(j,sum+values[j],[...used,j]);
+       if(result)return result;
+     }
+     return null;
+   }
+   for(let i=0;i<values.length;i++){
+     const result=walk(i,values[i],[i]);
+     if(result)return result;
+   }
+   return null;
+ }
  function shuffleUntilSolvable(){
    let tries=0;
    while(!hasTenPath() && tries<100){
@@ -79,12 +98,17 @@ button.primary{background:#3978d4;color:white}
    document.getElementById('timerfill').style.background=timeLeft<=10?'#d65353':'#3978d4';
  }
  function endGame(){
-   clearInterval(timerId); timerId=null; ended=true; started=false; dragging=false; path=[]; render();
-   setStatus('⏰ 時間切れ！ スコアは '+score+' 点！「もう一度」で再挑戦しよう。');
+   clearInterval(timerId); timerId=null; ended=true; started=false; dragging=false; path=[];
+   hintPath=findTenPath()||[]; render();
+   if(hintPath.length){
+     setStatus('⏰ 時間切れ！ 黄色い数字をつなぐと合計10だったよ！ スコアは '+score+' 点！');
+   }else{
+     setStatus('⏰ 時間切れ！ スコアは '+score+' 点！「もう一度」で再挑戦しよう。');
+   }
    document.getElementById('undo').disabled=true;
  }
  function startGame(){
-   clearInterval(timerId); timeLeft=60; score=0; scoreEl.textContent='0'; path=[]; dragging=false; started=true; ended=false;
+   clearInterval(timerId); timeLeft=60; score=0; scoreEl.textContent='0'; path=[]; hintPath=[]; dragging=false; started=true; ended=false;
    values=Array.from({length:W*H},randomDigit); shuffleUntilSolvable(); updateTimer(); render();
    document.getElementById('undo').disabled=false;
    setStatus('スタート！ 1分以内にできるだけ多く10を作ろう！');
@@ -95,6 +119,7 @@ button.primary{background:#3978d4;color:white}
    values.forEach((v,i)=>{
      const el=document.createElement('div'); el.className='tile'; el.dataset.index=i; el.textContent=v;
      if(path.includes(i)) el.classList.add('selected');
+     if(hintPath.includes(i)) el.classList.add('hint');
      boardEl.appendChild(el);
    });
    sumEl.textContent=total()+' / 10';
@@ -119,6 +144,7 @@ button.primary{background:#3978d4;color:white}
    if(!started||ended){path=[];render();return}
    if(s===10){
      const earned = path.length * 10;
+     hintPath=[];
      path.forEach(i=>{values[i]=randomDigit()});
      shuffleUntilSolvable();
      score+=earned;scoreEl.textContent=score;path=[];render();setStatus('🎉 ぴったり10！ '+(earned)+'点ゲット！');
