@@ -46,6 +46,33 @@ button.primary{background:#3978d4;color:white}
  const W=5, H=5, boardEl=document.getElementById('board');
  const sumEl=document.getElementById('sum'), statusEl=document.getElementById('status'), scoreEl=document.getElementById('score');
  let values=[], path=[], hintPath=[], score=0, dragging=false, ignoreClick=false, timeLeft=60, timerId=null, started=false, ended=false;
+ let audioContext=null;
+ function playSuccessSound(tileCount){
+   try{
+     const AudioCtx=window.AudioContext||window.webkitAudioContext;
+     if(!AudioCtx)return;
+     if(!audioContext)audioContext=new AudioCtx();
+     if(audioContext.state==='suspended')audioContext.resume();
+     const now=audioContext.currentTime;
+     // Short two-note chime normally; a brighter four-note flourish for 4+ tiles.
+     const notes = tileCount >= 4
+       ? [[587,0],[740,0.075],[880,0.15],[1175,0.235]]
+       : [[660,0],[880,0.09]];
+     notes.forEach(([frequency,delay],index)=>{
+       const osc=audioContext.createOscillator();
+       const gain=audioContext.createGain();
+       osc.type=tileCount >= 4 ? 'triangle' : 'sine';
+       osc.frequency.setValueAtTime(frequency,now+delay);
+       gain.gain.setValueAtTime(0.0001,now+delay);
+       const peak = tileCount >= 4 ? 0.13 : 0.16;
+       const duration = tileCount >= 4 ? 0.19 : 0.16;
+       gain.gain.exponentialRampToValueAtTime(peak,now+delay+0.012);
+       gain.gain.exponentialRampToValueAtTime(0.0001,now+delay+duration);
+       osc.connect(gain);gain.connect(audioContext.destination);
+       osc.start(now+delay);osc.stop(now+delay+duration+0.01);
+     });
+   }catch(_){/* Sound is optional; gameplay should continue if audio is unavailable. */}
+ }
  const messages={start:'指を動かして隣の数字をつないでね！',over:'10を超えたよ。もう一度なぞってみよう！',miss:'今回は10じゃなかったよ。もう一度！',win:'🎉 ぴったり10！ 成功！'};
  function randomDigit(){return Math.floor(Math.random()*9)+1}
  function setStatus(s){statusEl.textContent=s}
@@ -143,6 +170,7 @@ button.primary{background:#3978d4;color:white}
    const s=total();
    if(!started||ended){path=[];render();return}
    if(s===10){
+     playSuccessSound(path.length);
      const earned = path.length * 10;
      hintPath=[];
      path.forEach(i=>{values[i]=randomDigit()});
